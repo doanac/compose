@@ -32,6 +32,7 @@ from ..const import COMPOSEFILE_V2_2 as V2_2
 from ..const import IS_WINDOWS_PLATFORM
 from ..errors import StreamParseError
 from ..progress_stream import StreamOutputError
+from ..project import download_compose_bundle
 from ..project import get_image_digests
 from ..project import MissingDigests
 from ..project import NoSuchService
@@ -45,6 +46,7 @@ from ..service import NeedsBuildError
 from ..service import OperationFailedError
 from .command import get_config_from_options
 from .command import project_from_options
+from .docker_client import get_client
 from .docopt_command import DocoptDispatcher
 from .docopt_command import get_handler
 from .docopt_command import NoSuchCommand
@@ -117,7 +119,7 @@ def perform_command(options, handler, command_options):
         handler(command_options)
         return
 
-    if options['COMMAND'] == 'config':
+    if options['COMMAND'] in ('config', 'download'):
         command = TopLevelCommand(None, options=options)
         handler(command, command_options)
         return
@@ -217,6 +219,7 @@ class TopLevelCommand(object):
       config             Validate and view the Compose file
       create             Create services
       down               Stop and remove containers, networks, images, and volumes
+      download           Download a docker-compose bundle
       events             Receive real time events from containers
       exec               Execute a command in a running container
       help               Get help on a command
@@ -422,6 +425,17 @@ class TopLevelCommand(object):
             options['--remove-orphans'],
             timeout=timeout,
             ignore_orphans=ignore_orphans)
+
+    def download(self, options):
+        """
+        Downloads a docker-compose bundle.
+
+        Usage: download [options] BUNDLE
+        """
+        project_dir = self.toplevel_options.get('--project-directory') or './'
+        bundle = options['BUNDLE']
+        environment = Environment.from_env_file(project_dir)
+        download_compose_bundle(get_client(environment), project_dir, bundle)
 
     def events(self, options):
         """

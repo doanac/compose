@@ -2,18 +2,26 @@ from __future__ import absolute_import
 from __future__ import unicode_literals
 
 import datetime
+import json
 import logging
 import operator
 import re
+import tarfile
+from base64 import b64decode
+from base64 import b64encode
+from io import BytesIO
 from functools import reduce
 from os import path
 
 import enum
 import six
+from docker import auth
 from docker.errors import APIError
 from docker.errors import ImageNotFound
 from docker.errors import NotFound
 from docker.utils import version_lt
+
+import requests
 
 from . import parallel
 from .cli.errors import UserError
@@ -946,3 +954,77 @@ class NoSuchService(Exception):
 class ProjectError(Exception):
     def __init__(self, msg):
         self.msg = msg
+
+
+def _reg_get(url, auth_config, accept_content_type=None, **kwargs):
+    headers = {}
+    if accept_content_type:
+        headers['Accept'] = accept_content_type
+    r = requests.get(url, **kwargs)
+    if r.status_code == 401 and auth_config:
+        scope = r.json()['errors'][0]['detail'][0]
+        params = {
+            'service': 'registry',
+            'scope': '%s:%s:%s' % (
+                scope['Type'], scope['Name'], scope['Action']),
+        }
+
+        user_pass = auth_config.get('username', '')
+        if user_pass:
+            user_pass = user_pass + ':'
+        user_pass += auth_config.get('password', '')
+
+        headers = {
+            'Authorization': 'Basic ' + b64encode(user_pass.encode()).decode(),
+        }
+        r = requests.get(
+            'https://' + auth_config['serveraddress'] + '/token-auth/',
+            headers=headers,
+            params=params)
+        if r.status_code == 200:
+            headers = {
+                'Authorization': 'bearer ' + r.json()['token']
+            }
+            if accept_content_type:
+                headers['Accept'] = accept_content_type
+            r = requests.get(url, headers=headers, **kwargs)
+    if r.status_code != 200:
+        raise ProjectError('Unable to get %s: HTTP_%d\n' % (
+            r.url, r.status_code, r.text))
+    return r
+
+
+def download_compose_bundle(client, project_dir, compose_bundle):
+    digest = client.inspect_distribution(
+        compose_bundle)['Descriptor']['digest']
+
+    registry, repo = auth.resolve_repository_name(compose_bundle)
+    if '@sha256' in repo:
+        repo, _ = repo.split('@sha256')
+    elif ':' in repo:
+        repo, _ = repo.split(':')
+
+    auth_config = None
+    header = auth.get_config_header(client, registry)
+    if header:
+        auth_config = json.loads(b64decode(header).decode())
+
+    r = _reg_get(
+        'https://' + registry + '/v2/' + repo + '/manifests/' + digest,
+        auth_config,
+        'application/vnd.oci.image.manifest.v1+json'
+    )
+    manifest = r.json()
+    annotation = (manifest.get('annotations') or {}).get('compose-bundle')
+    if not annotation:
+        raise ProjectError('Invalid bundle - Manifest missing required property "annotations.compose-bundle"')
+    if annotation != 'v1':
+        raise ProjectError('Invalid bundle - "annotations.compose-bundle={}" not supported'.format(annotation))
+    digest = manifest['layers'][0]['digest']
+    r = _reg_get(
+        'https://' + registry + '/v2/' + repo + '/blobs/' + digest,
+        auth_config,
+        stream=True
+    )
+    tf = tarfile.open(mode='r:gz', fileobj=BytesIO(r.content))
+    tf.extractall(project_dir)
