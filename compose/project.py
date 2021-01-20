@@ -595,6 +595,7 @@ class Project:
            cli=False,
            one_off=False,
            override_options=None,
+           extra_label=None,
            ):
 
         if cli:
@@ -613,6 +614,8 @@ class Project:
 
         for svc in services:
             svc.ensure_image_exists(do_build=do_build, silent=silent, cli=cli)
+            if extra_label:
+                svc.extra_labels.append(extra_label)
         plans = self._get_convergence_plans(
             services,
             strategy,

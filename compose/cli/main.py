@@ -1017,6 +1017,7 @@ class TopLevelCommand:
                                        container. Implies --abort-on-container-exit.
             --scale SERVICE=NUM        Scale SERVICE to NUM instances. Overrides the
                                        `scale` setting in the Compose file if present.
+            --label key=val            Add a custom label to each container.
         """
         start_deps = not options['--no-deps']
         always_recreate_deps = options['--always-recreate-deps']
@@ -1028,6 +1029,7 @@ class TopLevelCommand:
         detached = options.get('--detach')
         no_start = options.get('--no-start')
         attach_dependencies = options.get('--attach-dependencies')
+        extra_label = options.get('--label')
 
         if detached and (cascade_stop or exit_value_from or attach_dependencies):
             raise UserError(
@@ -1064,6 +1066,7 @@ class TopLevelCommand:
                     renew_anonymous_volumes=options.get('--renew-anon-volumes'),
                     silent=options.get('--quiet-pull'),
                     cli=native_builder,
+                    extra_label=extra_label,
                 )
 
             try:
